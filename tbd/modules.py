@@ -56,7 +56,7 @@ class OrModule(nn.Module):
         return out
 
 
-class AttentionModule(nn.Module):
+class AttentionModuleBase(nn.Module):
     """ A neural module that takes a feature map and attention, attends to the features, and 
     produces an attention.
 
@@ -82,16 +82,47 @@ class AttentionModule(nn.Module):
         super().__init__()
         self.conv1 = nn.Conv2d(dim, dim, kernel_size=3, padding=1)
         self.conv2 = nn.Conv2d(dim, dim, kernel_size=3, padding=1) 
-        self.conv3 = nn.Conv2d(dim, 1, kernel_size=1, padding=0)
         torch.nn.init.kaiming_normal_(self.conv1.weight)
         torch.nn.init.kaiming_normal_(self.conv2.weight)
-        torch.nn.init.kaiming_normal_(self.conv3.weight)
         self.dim = dim
 
     def forward(self, feats, attn):
+        print("Should not print!! ============================================== ")
+
+
+class AttentionModuleDerived(nn.Module):
+    """ A neural module that takes a feature map and attention, attends to the features, and 
+    produces an attention.
+
+    Extended Summary
+    ----------------
+    An :class:`AttentionModule` takes input features and an attention and produces an attention. It
+    multiplicatively combines its input feature map and attention to attend to the relevant region
+    of the feature map. It then processes the attended features via a series of convolutions and
+    produces an attention mask highlighting the objects that possess the attribute the module is
+    looking for.
+
+    For example, an :class:`AttentionModule` may be tasked with finding cubes. Given an input
+    attention of all ones, it will highlight all the cubes in the provided input features. Given an
+    attention mask highlighting all the red objects, it will produce an attention mask highlighting
+    all the red cubes.
+
+    Attributes
+    ----------
+    dim : int
+        The number of channels of each convolutional filter.
+    """
+    def __init__(self, dim, Baseclass):
+        super().__init__()
+        self.conv3 = nn.Conv2d(dim, 1, kernel_size=1, padding=0)
+        torch.nn.init.kaiming_normal_(self.conv3.weight)
+        self.dim = dim
+        self.baseclass = Baseclass
+
+    def forward(self, feats, attn):
         attended_feats = torch.mul(feats, attn.repeat(1, self.dim, 1, 1))
-        out = F.relu(self.conv1(attended_feats))
-        out = F.relu(self.conv2(out))
+        out = F.relu(self.baseclass.conv1(attended_feats))
+        out = F.relu(self.baseclass.conv2(out))
         out = F.sigmoid(self.conv3(out))
         return out
 
@@ -130,7 +161,7 @@ class QueryModule(nn.Module):
         return out
 
 
-class RelateModule(nn.Module):
+class RelateModuleBase(nn.Module):
     """ A neural module that takes as input a feature map and an attention and produces an attention
     as output.
 
@@ -153,22 +184,46 @@ class RelateModule(nn.Module):
         self.conv3 = nn.Conv2d(dim, dim, kernel_size=3, padding=4, dilation=4)  # 15
         self.conv4 = nn.Conv2d(dim, dim, kernel_size=3, padding=8, dilation=8)  # 31 -- full image
         self.conv5 = nn.Conv2d(dim, dim, kernel_size=3, padding=1, dilation=1)
-        self.conv6 = nn.Conv2d(dim, 1, kernel_size=1, padding=0)
         torch.nn.init.kaiming_normal_(self.conv1.weight)
         torch.nn.init.kaiming_normal_(self.conv2.weight)
         torch.nn.init.kaiming_normal_(self.conv3.weight)
         torch.nn.init.kaiming_normal_(self.conv4.weight)
         torch.nn.init.kaiming_normal_(self.conv5.weight)
-        torch.nn.init.kaiming_normal_(self.conv6.weight)
         self.dim = dim
 
     def forward(self, feats, attn):
+        print("Should not print!! ============================================== ")        
+
+class RelateModuleDerived(nn.Module):
+    """ A neural module that takes as input a feature map and an attention and produces an attention
+    as output.
+
+    Extended Summary
+    ----------------
+    A :class:`RelateModule` takes input features and an attention and produces an attention. It
+    multiplicatively combines the attention and the features to attend to a relevant region, then
+    uses a series of dilated convolutional filters to indicate a spatial relationship to the input
+    attended region.
+
+    Attributes
+    ----------
+    dim : int
+        The number of channels of each convolutional filter.
+    """
+    def __init__(self, dim, Baseclass):
+        super().__init__()
+        self.conv6 = nn.Conv2d(dim, 1, kernel_size=1, padding=0)
+        torch.nn.init.kaiming_normal_(self.conv6.weight)
+        self.dim = dim
+        self.baseclass = Baseclass
+
+    def forward(self, feats, attn):
         feats = torch.mul(feats, attn.repeat(1, self.dim, 1, 1))
-        out = F.relu(self.conv1(feats))
-        out = F.relu(self.conv2(out))
-        out = F.relu(self.conv3(out))
-        out = F.relu(self.conv4(out))
-        out = F.relu(self.conv5(out))
+        out = F.relu(self.baseclass.conv1(feats))
+        out = F.relu(self.baseclass.conv2(out))
+        out = F.relu(self.baseclass.conv3(out))
+        out = F.relu(self.baseclass.conv4(out))
+        out = F.relu(self.baseclass.conv5(out))
         out = F.sigmoid(self.conv6(out))
         return out
 
