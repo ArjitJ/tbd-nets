@@ -20,7 +20,7 @@
 
 import torch
 import torch.nn as nn
-
+from copy import copy
 from . import modules
 
 
@@ -157,11 +157,87 @@ class TbDNet(nn.Module):
         '''
         return self._attention_sum
 
+    def level_tree(program):
+        lst = []
+        dic = dict()
+        secondArg = None
+        depth = 0
+        secondDepth = 0
+        end = None
+        for idx in range(len(program)-1, -1, -1):
+            i = program[idx].item()
+            module_type = self.vocab['program_idx_to_token'][i]
+            if module_type in {'<NULL>', '<START>', '<END>', '<UNK>', 'unique'}:
+                if module_type == '<END>':
+                  end = idx
+                continue  # the above are no-ops in our model
+            if module_type == 'scene':
+                # store the previous output; it will be needed later
+                # scene is just a flag, performing no computation
+                secondArg = idx+1
+                secondDepth = depth
+                depth = 0
+                # if idx == end -1:
+                #   secondArg = None
+                #   depth = secondDepth
+                #   secondDepth = 0
+                continue  
+            if 'equal' in module_type or module_type in {'intersect', 'union', 'less_than',
+                                                          'greater_than'}:
+                dic[idx] = {'function':module_type, 'input1':idx+1, 'input2':secondArg, 'level':None}
+                # secondArg = None
+                depth = 1+max(depth, secondDepth)
+                secondDepth = 0
+            else:
+                # these modules take extracted image features and a previous attention
+                depth += 1
+                dic[idx] = {'function':module_type, 'input1':idx+1, 'input2':None, 'level':None}
+        levels = [1]
+        for i in range(depth):
+            newlevels = []
+            for j in levels:
+                try:
+                    dic[j]['level']=depth-i
+                    newlevels.append(dic[j]['input1'])
+                    if dic[j]['input2'] is not None:
+                        newlevels.append(dic[j]['input2'])
+                except:
+                    pass
+            levels = newlevels
+        return dic
+
+    def getLvlToIdx(tree):
+        dic = dict()
+        for i in tree.keys():
+            try:
+                dic[tree[i]['level']].append(i)
+            except:
+                dic[tree[i]['level']] = [i]
+        return dic, max(dic.keys())                
+#Think of 'levels' as Time                
     def forward(self, feats, programs):
         batch_size = feats.size(0)
         assert batch_size == len(programs)
 
         feat_input_volume = self.stem(feats)  # forward all the features through the stem at once
+        outputs_of_modules = []
+        levels = []
+        level_to_idxs = []
+        maxLvls = []
+        maxLevel = -1
+        for i in range(batch_size):
+            tmpLst = []
+            for j in range(programs[0].shape[0]): # Programs are padded to fixed length
+                tmpLst.append(None)
+            outputs_of_modules.append(tmpLst)
+            tmp = self.level_tree(programs[i].data.cpu())
+            levels.append(tmp)
+            tmp = self.getLvlToIdx(tmp)
+            level_to_idxs.append(tmp[0])
+            maxLvls.append(tmp[1])
+            maxLevel = max(maxLevel, tmp[1])
+
+        # for t in range(1, maxLevel+1):
 
         # We compose each module network individually since they are constructed on a per-question
         # basis. Here we go through each program in the batch, construct a modular network based on
@@ -169,39 +245,43 @@ class TbDNet(nn.Module):
         # last module for each program in final_module_outputs. These are needed to then compute a
         # distribution over answers for all the questions as a batch.
         final_module_outputs = []
-        self._attention_sum = 0
         for n in range(batch_size):
             feat_input = feat_input_volume[n:n+1] 
-            output = feat_input
-            saved_output = None
-            for i in reversed(programs.data[n].cpu().numpy()):
-                module_type = self.vocab['program_idx_to_token'][i]
-                if module_type in {'<NULL>', '<START>', '<END>', '<UNK>', 'unique'}:
-                    continue  # the above are no-ops in our model
-                
-                module = self.function_modules[module_type]
-                if module_type == 'scene':
-                    # store the previous output; it will be needed later
-                    # scene is just a flag, performing no computation
-                    saved_output = output
-                    output = self.ones_var
-                    continue
-                
-                if 'equal' in module_type or module_type in {'intersect', 'union', 'less_than',
-                                                             'greater_than'}:
-                    output = module(output, saved_output)  # these modules take two feature maps
-                else:
-                    # these modules take extracted image features and a previous attention
-                    output = module(feat_input, output)
-
-                if any(t in module_type for t in ['filter', 'relate', 'same']):
-                    self._attention_sum += output.sum()
-                    
-            final_module_outputs.append(output)
-            
+            #Inputs are different for t = 1
+            for t in range(1, maxLvls[n]+1):
+                scheduledToExec = dict()
+                input1ToExec = dict()
+                input2ToExec = dict()
+                for node in level_to_idxs[n][t]:
+                    try:
+                        scheduledToExec[levels[node]['function']].append(node)
+                        if t!=1:
+                            input1ToExec[levels[node]['function']].append(levels[node][input1])
+                            input2ToExec[levels[node]['function']].append(levels[node][input2])
+                    except:
+                        scheduledToExec[levels[node]['function']] = [node]
+                        if t!=1:
+                            input1ToExec[levels[node]['function']] = [levels[node][input1]]
+                            input2ToExec[levels[node]['function']] = [levels[node][input2]]
+                for function in scheduledToExec.keys():
+                    module = self.function_modules[function]
+                    if t!=1:
+                        inputs1 = input1ToExec[function]
+                        if 'equal' in function or function in {'intersect', 'union', 'less_than',
+                                                                 'greater_than'}:
+                            inputs2 = input2ToExec[function]
+                        else:
+                            inputs2 = copy(inputs1)
+                            inputs1 = feat_input.repeat(len(inputs1)) 
+                    else:
+                        inputs1 = feat_input.repeat(len(scheduledToExec[function])) 
+                        inputs2 = ones_var.repeat(len(scheduledToExec[function]))           
+                    indices = scheduledToExec[function]
+                    outputs_of_modules[indices] = module(inputs1, inputs2) 
+            final_module_outputs.append(outputs_of_modules[1])
         final_module_outputs = torch.cat(final_module_outputs, 0)
         return self.classifier(final_module_outputs)
-
+        
     def forward_and_return_intermediates(self, program_var, feats_var):
         """ Forward program `program_var` and image features `feats_var` through the TbD-Net
         and return an answer and intermediate outputs.
