@@ -114,11 +114,19 @@ class TbDNet(nn.Module):
             elif 'query' in module_name or module_name in {'exist', 'count'}:
                 module = modules.QueryModule(module_dim)
             elif 'relate' in module_name:
-                module = modules.RelateModule(module_dim)
+                if 'relate' not in self.function_modules:
+                    m = modules.RelateModuleBase(module_dim)
+                    self.function_modules['relate'] = m
+
+                module = modules.RelateModuleDerived(module_dim, self.function_modules['relate'])
             elif 'same' in module_name:
                 module = modules.SameModule(module_dim)
             else:
-                module = modules.AttentionModule(module_dim)
+                if 'filter' not in self.function_modules:
+                    m = modules.AttentionModuleBase(module_dim)
+                    self.function_modules['filter'] = m
+
+                module = modules.AttentionModuleDerived(module_dim, self.function_modules['filter'])
 
             # add the module to our dictionary and register its parameters so it can learn
             self.function_modules[module_name] = module
