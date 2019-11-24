@@ -70,7 +70,7 @@ class TbDNet(nn.Module):
             The depth to project the final feature map to before classification.
         """
         super().__init__()
-
+        print(feature_dim)
         # The stem takes features from ResNet (or another feature extractor) and projects down to
         # a lower-dimensional space for sending through the TbD-net
         self.stem = nn.Sequential(nn.Conv2d(feature_dim[0], module_dim, kernel_size=3, padding=1),
@@ -360,7 +360,7 @@ class TbDNet(nn.Module):
         return (self.vocab['answer_idx_to_token'][pred.item()], intermediaries)
 
 
-def load_tbd_net(checkpoint, vocab):
+def load_tbd_net(checkpoint, vocab, feature_dim=(512, 28, 28)):
     """ Convenience function to load a TbD-Net model from a checkpoint file.
 
     Parameters
@@ -380,8 +380,8 @@ def load_tbd_net(checkpoint, vocab):
     -----
     This pushes the TbD-Net model to the GPU if a GPU is available.
     """
-    tbd_net = TbDNet(vocab)
-    tbd_net.load_state_dict(torch.load(str(checkpoint), map_location={'cuda:0': 'cpu'}))
+    tbd_net = TbDNet(vocab, feature_dim)
+    tbd_net.load_state_dict(torch.load(str(checkpoint), map_location={'cuda:0': 'cpu'})['state_dict'])
     if torch.cuda.is_available():
         tbd_net.cuda()
     return tbd_net
